@@ -1,0 +1,77 @@
+USE agrocontrol;
+-- 1.	¿Cuáles son todas las parcelas de una finca específica?
+SELECT 
+   f.Nombre ,
+   p.parcelas_ID, 
+   p.Hectareas
+FROM Fincas f
+JOIN parcelas p ON p.finca_id = f.finca_ID
+WHERE f.Nombre = 'La Esperanza';
+-- 2.	¿Qué cultivos requieren más de 500mm de agua?
+SELECT 
+   nombre_cientifico,
+	nombre_comun, 
+	agua
+FROM cultivos
+WHERE agua > 500;
+
+-- 3.	¿Cuáles son las parcelas con sistema de riego por goteo y área mayor a 5 hectáreas?
+SELECT 
+	parcelas_ID,
+	hectareas,
+	sistema_riego
+FROM parcelas p
+WHERE hectareas > 5 AND sistema_riego = 'Goteo' ;
+-- 4.	¿Qué insumos son semillas o fertilizantes?
+SELECT 
+  codigo_id,
+  nombre_comercial,
+  tipo
+FROM inventario 
+WHERE tipo = 'fertilizante' OR tipo = 'semilla';
+-- 5.	¿Cuáles son las cosechas realizadas entre el 1 de enero y el 31 de marzo de 2024?(la consulta esta bien realizada, solo que en la epoca no hay cosechas registradas)
+SELECT
+	cosecha_id,
+	cultivo 
+FROM cosecha 
+WHERE fin > DATE('2023-12-31') AND fin < DATE('2024-3-31'); 
+-- 6.	¿Qué fincas están ubicadas en las regiones Valle Central, Zona Norte o Pacífico Sur?(las ubicaciones las tengo por veredas, asi que voy a hacer la consulta con vereda el carmen)
+SELECT 
+	nombre 
+FROM fincas 
+WHERE region = 'valle central' OR region = 'zona norte' OR region = 'pacifico sur';
+-- 7.	¿Cuáles son los cultivos cuyo nombre común contiene la palabra "maíz"?
+SELECT 
+   cultivo_id,
+   nombre_comun,
+   nombre_cientifico
+FROM cultivos
+WHERE nombre_comun LIKE '%maíz%';
+-- 8.	¿Qué parcelas no tienen historial de uso registrado?
+SELECT 
+   p.parcelas_ID,
+   p.Hectareas,
+   p.sistema_riego
+FROM Parcelas p
+LEFT JOIN historial_uso h ON p.parcelas_ID = h.parcela_id
+WHERE h.id_historial IS NULL;
+
+-- 9.	¿Cuáles son las fincas ordenadas por extensión total de mayor a menor?
+SELECT 
+   Finca_ID,
+   Nombre,
+   Hectareas,
+   ubicacion,
+   region
+FROM Fincas
+ORDER BY Hectareas DESC;
+
+-- 10.	¿Cuál es el rendimiento promedio por tipo de cultivo?
+SELECT 
+   c.nombre_comun AS Cultivo,
+   AVG(t.rendimiento_esperado) AS Rendimiento_Promedio,
+   COUNT(t.id_siembra) AS Total_Siembras
+FROM temporada t
+JOIN cultivos c ON t.cultivo_id = c.cultivo_id
+GROUP BY c.cultivo_id, c.nombre_comun
+ORDER BY Rendimiento_Promedio DESC;
