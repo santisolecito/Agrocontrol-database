@@ -1,0 +1,481 @@
+-- segunda parte (triggers, funciones y lo otro)
+USE agrocontrol;
+
+DROP TABLE IF EXISTS alertas;
+
+CREATE TABLE alertas (
+    alerta_id INT PRIMARY KEY AUTO_INCREMENT,
+    mensaje VARCHAR(200),
+    fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+DELIMITER $$
+
+DROP PROCEDURE IF EXISTS RegistrarSiembra$$
+CREATE PROCEDURE RegistrarSiembra(
+    IN p_parcela_id INT,
+    IN p_cultivo_id INT,
+    IN p_fecha_siembra DATE,
+    IN p_densidad INT,
+    IN p_rendimiento INT
+)
+BEGIN
+    DECLARE v_temp_finca INT;
+    DECLARE v_temp_cultivo INT;
+    DECLARE v_dias_crecimiento INT;
+    DECLARE v_fecha_cosecha DATE;
+    
+    SELECT F.Temperatura INTO v_temp_finca
+    FROM Fincas F
+    JOIN Parcelas P ON F.Finca_ID = P.finca_id
+    WHERE P.parcelas_ID = p_parcela_id;
+    
+    SELECT temperatura_optima, tiempo_crecimiento
+    INTO v_temp_cultivo, v_dias_crecimiento
+    FROM cultivos
+    WHERE cultivo_id = p_cultivo_id;
+    
+    IF v_temp_finca BETWEEN (v_temp_cultivo - 5) AND (v_temp_cultivo + 15) THEN
+        SET v_fecha_cosecha = DATE_ADD(p_fecha_siembra, INTERVAL v_dias_crecimiento DAY);
+        
+        INSERT INTO temporada (parcela_id, cultivo_id, fecha_siembra, fecha_estimada_cosecha, densidad_siembra, rendimiento_esperado)
+        VALUES (p_parcela_id, p_cultivo_id, p_fecha_siembra, v_fecha_cosecha, p_densidad, p_rendimiento);
+        
+        SELECT 'Siembra registrada exitosamente' AS Mensaje;
+    ELSE
+        SELECT 'Error: Temperatura no es adecuada para este cultivo' AS Mensaje;
+    END IF;
+END$$
+Delimiter $$
+
+DROP PROCEDURE IF EXISTS PlanificarCosecha$$
+CREATE PROCEDURE PlanificarCosecha(
+    IN p_id_siembra INT
+)
+BEGIN
+    SELECT 
+        id_siembra,
+        parcela_id,
+        cultivo_id,
+        fecha_siembra,
+        fecha_estimada_cosecha,
+        DATEDIFF(fecha_estimada_cosecha, CURDATE()) AS dias_faltantes
+    FROM temporada
+    WHERE id_siembra = p_id_siembra;
+END$$
+Delimiter $$
+DROP PROCEDURE IF EXISTS AsignarTrabajadores$$
+CREATE PROCEDURE AsignarTrabajadores(
+    IN p_empleado_id INT,
+    IN p_tarea VARCHAR(20),
+    IN p_parcela_id INT,
+    IN p_fecha DATETIME,
+    IN p_horas INT
+)
+BEGIN
+    DECLARE v_tiene_tarea INT;
+    
+    SELECT COUNT(*) INTO v_tiene_tarea
+    FROM area_asignada
+    WHERE empleado = p_empleado_id 
+    AND DATE(fecha) = DATE(p_fecha);
+    
+    IF v_tiene_tarea = 0 THEN
+        INSERT INTO area_asignada (empleado, tarea, parcela, fecha, horas_trabajadas, observaciones)
+        VALUES (p_empleado_id, p_tarea, p_parcela_id, p_fecha, p_horas, 'OK');
+        
+        SELECT 'Empleado asignado correctamente' AS Mensaje;
+    ELSE
+        SELECT 'El empleado ya tiene una tarea ese dia' AS Mensaje;
+    END IF;
+END$$
+Delimiter $$
+DROP PROCEDURE IF EXISTS RegistrarAnalisisSuelo$$
+CREATE PROCEDURE RegistrarAnalisisSuelo(
+    IN p_fecha DATE,
+    IN p_parcela INT,
+    IN p_ph INT,
+    IN p_nitrogeno INT,
+    IN p_fosforo INT,
+    IN p_potasio INT,
+    IN p_materia_organica INT,
+    IN p_laboratorio VARCHAR(20)
+)
+BEGIN
+    DECLARE v_recomendacion VARCHAR(100);
+    
+    SET v_recomendacion = 'Suelo en buen estado';
+    
+    IF p_ph < 6 THEN
+        SET v_recomendacion = 'Aumentar pH';
+    END IF;
+    
+    IF p_nitrogeno < 75 THEN
+        SET v_recomendacion = CONCAT(v_recomendacion, ', Aplicar nitrogeno');
+    END IF;
+    
+    IF p_materia_organica < 3 THEN
+        SET v_recomendacion = CONCAT(v_recomendacion, ', Agregar materia organica');
+    END IF;
+    
+    INSERT INTO analisis_suelos (fecha_muestreo, parcela, ph, nitrogeno, fosforo, potasio, materia_organica, conductividad, nombre_laboratorio, recomendaciones)
+    VALUES (p_fecha, p_parcela, p_ph, p_nitrogeno, p_fosforo, p_potasio, p_materia_organica, 2, p_laboratorio, v_recomendacion);
+    
+    SELECT v_recomendacion AS Recomendaciones;
+END$$
+-- error
+DELIMITER $$
+
+DROP PROCEDURE IF EXISTS CalcularRendimientoCosecha $$
+
+CREATE PROCEDURE CalcularRendimientoCosecha(
+    IN p_parcela INT,
+    IN p_cultivo INT,
+    IN p_cantidad_real DECIMAL(10,2)
+)
+BEGIN
+    DECLARE v_esperado DECIMAL(10,2);
+    DECLARE v_diferencia DECIMAL(10,2);
+    DECLARE v_porcentaje DECIMAL(10,2);
+    
+    SELECT rendimiento_esperado 
+    INTO v_esperado
+    FROM temporada
+    WHERE parcela_id = p_parcela 
+      AND cultivo_id = p_cultivo
+    ORDER BY fecha_siembra DESC
+    LIMIT 1;
+    
+    IF v_esperado IS NULL OR v_esperado = 0 THEN
+        SET v_esperado = 0;
+        SET v_diferencia = p_cantidad_real;
+        SET v_porcentaje = 0.00;
+    ELSE
+        SET v_diferencia = p_cantidad_real - v_esperado;
+        SET v_porcentaje = ROUND((p_cantidad_real / v_esperado) * 100, 2);
+    END IF;
+    
+    SELECT 
+        p_cantidad_real AS CantidadReal,
+        v_esperado AS Esperado,
+        v_diferencia AS Diferencia,
+        v_porcentaje AS Porcentaje;
+END$$
+
+DELIMITER ;
+-- error
+DELIMITER $$
+
+DROP TRIGGER IF EXISTS TR_ActualizarStockInsumos$$
+CREATE TRIGGER TR_ActualizarStockInsumos
+AFTER INSERT ON movimiento_insumos
+FOR EACH ROW
+BEGIN
+    IF NEW.tipo_movimiento = 'Entrada' THEN
+        UPDATE inventario
+        SET cantidad_stok = cantidad_stok + NEW.cantidad
+        WHERE Codigo_id = NEW.Codigo_id;
+    END IF;
+    
+    IF NEW.tipo_movimiento = 'Salida' THEN
+        UPDATE inventario
+        SET cantidad_stok = cantidad_stok - NEW.cantidad
+        WHERE Codigo_id = NEW.Codigo_id;
+    END IF;
+END$$
+Delimiter $$
+DROP TRIGGER IF EXISTS TR_VerificarHorometroMaquinaria$$
+CREATE TRIGGER TR_VerificarHorometroMaquinaria
+BEFORE UPDATE ON maquinaria
+FOR EACH ROW
+BEGIN
+    IF NEW.horometro < OLD.horometro THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'El horometro no puede disminuir';
+    END IF;
+END$$
+Delimiter $$
+
+DROP TRIGGER IF EXISTS TR_RegistrarHistorialParcela$$
+CREATE TRIGGER TR_RegistrarHistorialParcela
+AFTER INSERT ON temporada
+FOR EACH ROW
+BEGIN
+    DECLARE v_uso INT;
+    
+    SELECT uso_id INTO v_uso
+    FROM Parcelas
+    WHERE parcelas_ID = NEW.parcela_id;
+    
+    IF v_uso IS NOT NULL THEN
+        INSERT INTO historial_uso (parcela_id, uso_id, fecha_inicio, fecha_fin)
+        VALUES (NEW.parcela_id, v_uso, NEW.fecha_siembra, NEW.fecha_estimada_cosecha);
+    END IF;
+END$$
+Delimiter $$
+DROP TRIGGER IF EXISTS TR_AlertaStockMinimo$$
+CREATE TRIGGER TR_AlertaStockMinimo
+AFTER UPDATE ON inventario
+FOR EACH ROW
+BEGIN
+    IF NEW.cantidad_stok < 50 THEN
+        INSERT INTO alertas (mensaje)
+        VALUES (CONCAT('ALERTA: Stock bajo de ', NEW.nombre_comercial, ' - Quedan ', NEW.cantidad_stok, ' unidades'));
+    END IF;
+END$$
+Delimiter $$
+DROP TRIGGER IF EXISTS TR_ActualizarEstadoParcelaPorCosecha$$
+CREATE TRIGGER TR_ActualizarEstadoParcelaPorCosecha
+AFTER INSERT ON cosecha
+FOR EACH ROW
+BEGIN
+    UPDATE historial_uso
+    SET fecha_fin = NEW.fin
+    WHERE parcela_id = NEW.parcela
+    AND fecha_fin >= CURDATE()
+    LIMIT 1;
+END$$
+
+DELIMITER ;
+
+DROP VIEW IF EXISTS V_EstadoActualParcelas;
+CREATE VIEW V_EstadoActualParcelas AS
+SELECT 
+   P.parcelas_ID,
+   F.Nombre AS Finca,
+   P.Hectareas,
+   P.sistema_riego,
+   C.nombre_comun AS Cultivo,
+   T.fecha_siembra,
+   T.fecha_estimada_cosecha,
+   DATEDIFF(T.fecha_estimada_cosecha, CURDATE()) AS Dias_Restantes
+FROM Parcelas P
+JOIN Fincas F ON P.finca_id = F.Finca_ID
+LEFT JOIN temporada T ON P.parcelas_ID = T.parcela_id
+LEFT JOIN cultivos C ON T.cultivo_id = C.cultivo_id;
+
+DROP VIEW IF EXISTS V_InventarioInsumos;
+CREATE VIEW V_InventarioInsumos AS
+SELECT 
+   Codigo_id,
+   nombre_comercial,
+   Tipo,
+   cantidad_stok AS Stock,
+   ubicacion,
+   precio,
+   fecha_caducidad,
+   DATEDIFF(fecha_caducidad, CURDATE()) AS Dias_Para_Caducar,
+   CASE 
+      WHEN cantidad_stok < 50 THEN 'CRITICO'
+      WHEN cantidad_stok < 100 THEN 'BAJO'
+      ELSE 'OK'
+   END AS Estado
+FROM inventario;
+
+DROP VIEW IF EXISTS V_CalendarioMantenimientoMaquinaria;
+CREATE VIEW V_CalendarioMantenimientoMaquinaria AS
+SELECT 
+   M.codigo_maquina,
+   M.marca,
+   M.modelo,
+   M.horometro,
+   M.estado,
+   MA.fecha AS Ultimo_Mantenimiento,
+   MA.tipo_mantenimiento,
+   DATEDIFF(CURDATE(), MA.fecha) AS Dias_Sin_Mantenimiento
+FROM maquinaria M
+LEFT JOIN mantenimiento MA ON M.codigo_maquina = MA.codigo_maquina;
+
+DROP VIEW IF EXISTS V_RendimientoCultivos;
+CREATE VIEW V_rendimientocultivos AS 
+SELECT 
+   C.nombre_comun AS Cultivo,
+   P.parcelas_ID AS Parcela,
+   T.rendimiento_esperado AS Esperado,
+   CO.cantidad AS cantidad,
+   (CO.cantidad - T.rendimiento_esperado) AS Diferencia,
+   CO.calidad_producto
+FROM cosecha CO
+JOIN Parcelas P ON P.parcelas_ID = P.parcelas_ID
+JOIN cultivos C ON CO.cultivo = C.cultivo_id
+JOIN temporada T ON T.parcela_id = P.parcelas_ID AND T.cultivo_id = C.cultivo_id;
+DROP VIEW IF EXISTS V_AsignacionEmpleados;
+CREATE VIEW V_AsignacionEmpleados AS
+SELECT 
+   E.empleados_id,
+   CONCAT(E.nombres, ' ', E.apellidos) AS Nombre,
+   E.especialidad,
+   A.tarea,
+   A.parcela,
+   A.fecha,
+   A.horas_trabajadas
+FROM empleados E
+LEFT JOIN area_asignada A ON E.empleados_id = A.empleado
+WHERE A.fecha >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+   OR A.fecha IS NULL;
+
+DELIMITER $$
+
+DROP FUNCTION IF EXISTS FN_CalcularDiasHastaCosecha$$
+CREATE FUNCTION FN_CalcularDiasHastaCosecha(p_id_siembra INT)
+RETURNS INT
+DETERMINISTIC
+BEGIN
+   DECLARE v_dias INT;
+   DECLARE v_fecha DATE;
+    
+   SELECT fecha_estimada_cosecha INTO v_fecha
+   FROM temporada
+   WHERE id_siembra = p_id_siembra;
+    
+   IF v_fecha IS NOT NULL THEN
+      SET v_dias = DATEDIFF(v_fecha, CURDATE());
+   ELSE
+      SET v_dias = 0;
+   END IF;
+    
+   RETURN v_dias;
+END$$
+DELIMITER $$
+DROP FUNCTION IF EXISTS FN_ObtenerDisponibilidadParcela$$
+CREATE FUNCTION FN_ObtenerDisponibilidadParcela(p_parcela_id INT)
+RETURNS VARCHAR(20)
+DETERMINISTIC
+BEGIN
+   DECLARE v_estado VARCHAR(20);
+   DECLARE v_cuenta INT;
+    
+   SELECT COUNT(*) INTO v_cuenta
+   FROM temporada
+   WHERE parcela_id = p_parcela_id
+   AND fecha_estimada_cosecha >= CURDATE();
+    
+   IF v_cuenta > 0 THEN
+      SET v_estado = 'Ocupada';
+   ELSE
+      SET v_estado = 'Disponible';
+   END IF;
+    
+   RETURN v_estado;
+END$$
+DELIMITER $$
+DROP FUNCTION IF EXISTS FN_CalcularRendimientoEstimado$$
+CREATE FUNCTION FN_CalcularRendimientoEstimado(p_parcela_id INT, p_cultivo_id INT)
+RETURNS INT
+DETERMINISTIC
+BEGIN
+   DECLARE v_promedio INT;
+    
+   SELECT AVG(cantidad) INTO v_promedio
+   FROM cosecha
+   WHERE parcela = p_parcela_id
+   AND cultivo = p_cultivo_id;
+    
+   IF v_promedio IS NULL THEN
+      SET v_promedio = 0;
+   END IF;
+    
+   RETURN v_promedio;
+END$$
+DELIMITER $$
+DROP FUNCTION IF EXISTS FN_ObtenerConsumoCombustibleMaquinaria$$
+CREATE FUNCTION FN_ObtenerConsumoCombustibleMaquinaria(p_codigo_maquina INT)
+RETURNS DECIMAL(10,2)
+DETERMINISTIC
+BEGIN
+   DECLARE v_consumo DECIMAL(10,2);
+   DECLARE v_horas INT;
+    
+   SELECT horometro INTO v_horas
+   FROM maquinaria
+   WHERE codigo_maquina = p_codigo_maquina;
+    
+   SET v_consumo = v_horas * 0.5;
+    
+   RETURN v_consumo;
+END$$
+DELIMITER $$
+DROP FUNCTION IF EXISTS FN_CalcularRentabilidadCultivo$$
+CREATE FUNCTION FN_CalcularRentabilidadCultivo(p_cultivo_id INT)
+RETURNS DECIMAL(10,2)
+DETERMINISTIC
+BEGIN
+   DECLARE v_total DECIMAL(10,2);
+    
+   SELECT SUM(total_facturado) INTO v_total
+   FROM ventas
+   WHERE productos IN (SELECT nombre_comun FROM cultivos WHERE cultivo_id = p_cultivo_id);
+    
+   IF v_total IS NULL THEN
+      SET v_total = 0;
+   END IF;
+    
+   RETURN v_total;
+END$$
+
+DELIMITER ;
+
+SET GLOBAL event_scheduler = ON;
+
+DELIMITER $$
+
+DROP EVENT IF EXISTS EVT_VerificarMantenimientoMaquinaria$$
+CREATE EVENT EVT_VerificarMantenimientoMaquinaria
+ON SCHEDULE EVERY 30 SECOND
+STARTS CURRENT_TIMESTAMP
+DO
+BEGIN
+   INSERT INTO alertas (mensaje)
+   SELECT CONCAT('La maquina ', marca, ' ', modelo, ' necesita mantenimiento')
+   FROM maquinaria
+   WHERE horometro > 1500;
+END$$
+DELIMITER $$
+DROP EVENT IF EXISTS EVT_ActualizarEstadoSiembras$$
+CREATE EVENT EVT_ActualizarEstadoSiembras
+ON SCHEDULE EVERY 1 MINUTE
+STARTS CURRENT_TIMESTAMP
+DO
+BEGIN
+   INSERT INTO alertas (mensaje)
+   SELECT CONCAT('Revisar siembra en parcela ', parcela_id)
+   FROM temporada
+   WHERE fecha_estimada_cosecha = CURDATE();
+END$$
+DELIMITER $$
+DROP EVENT IF EXISTS EVT_GenerarAlertaCaducidadInsumos$$
+CREATE EVENT EVT_GenerarAlertaCaducidadInsumos
+ON SCHEDULE EVERY 30 SECOND
+STARTS CURRENT_TIMESTAMP
+DO
+BEGIN
+   INSERT INTO alertas (mensaje)
+   SELECT CONCAT('El insumo ', nombre_comercial, ' caduca pronto')
+   FROM inventario
+   WHERE DATEDIFF(fecha_caducidad, CURDATE()) <= 30
+   AND DATEDIFF(fecha_caducidad, CURDATE()) > 0;
+END$$
+DELIMITER $$
+DROP EVENT IF EXISTS EVT_CalcularCostosPorParcela$$
+CREATE EVENT EVT_CalcularCostosPorParcela
+ON SCHEDULE EVERY 1 MINUTE
+STARTS CURRENT_TIMESTAMP
+DO
+BEGIN
+   INSERT INTO alertas (mensaje)
+   VALUES ('Recordatorio: Calcular costos mensuales de parcelas');
+END$$
+DELIMITER $$
+DROP EVENT IF EXISTS EVT_RenovarContratoEmpleados$$
+CREATE EVENT EVT_RenovarContratoEmpleados
+ON SCHEDULE EVERY 1 MINUTE
+STARTS CURRENT_TIMESTAMP
+DO
+BEGIN
+   INSERT INTO alertas (mensaje)
+   SELECT CONCAT('Revisar contrato de ', nombres, ' ', apellidos)
+   FROM empleados
+   WHERE DATEDIFF(CURDATE(), fecha_contratacion) >= 365;
+END$$
+
+DELIMITER ;
