@@ -1,0 +1,39 @@
+-- RegistrarSiembra
+CALL RegistrarSiembra(1, 1, '2025-10-15', 1200, 3500);
+
+-- PlanificarCosecha
+CALL PlanificarCosecha(1);
+
+-- AsignarTrabajadores
+CALL AsignarTrabajadores(1, 'Riego', 1, '2025-10-30 08:00:00', 5);
+
+-- RegistrarAnalisisSuelo
+CALL RegistrarAnalisisSuelo('2025-10-29', 1, 6.5, 80, 50, 45, 3, 'AgroLab');
+
+-- CalcularRendimientoCosecha
+CALL CalcularRendimientoCosecha(1, 1, 3800);
+
+-- FN_CalcularDiasHastaCosecha
+SELECT FN_CalcularDiasHastaCosecha(1) AS Dias_Hasta_Cosecha;
+
+-- FN_ObtenerDisponibilidadParcela
+SELECT FN_ObtenerDisponibilidadParcela(1) AS Estado_Parcela;
+
+-- FN_CalcularRendimientoEstimado
+SELECT FN_CalcularRendimientoEstimado(1,1) AS Rendimiento_Promedio;
+
+-- FN_ObtenerConsumoCombustibleMaquinaria
+SELECT FN_ObtenerConsumoCombustibleMaquinaria(1) AS Consumo_Combustible;
+
+-- FN_CalcularRentabilidadCultivo
+SELECT FN_CalcularRentabilidadCultivo(1) AS Rentabilidad;
+
+-- Para probar TR_VerificarHorometroMaquinaria sin error:
+UPDATE maquinaria SET horometro = horometro + 50 WHERE codigo_maquina = 1;
+
+-- Para probar TR_ActualizarStockInsumos:
+INSERT INTO movimiento_insumos (Codigo_id, tipo_movimiento, cantidad)
+VALUES (1, 'Entrada', 20);
+
+-- Ver alertas generadas por eventos o triggers
+SELECT * FROM alertas ORDER BY fecha DESC;
